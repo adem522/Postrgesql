@@ -297,7 +297,7 @@ begin
 end $function$;
 --select * from countStaffRent();
 ------------------------------------------------------------------------------------------------------------------------------
-
+--TRIGGERS
 ------------------------------------------TRIGGER COMMISSIONED WHEN A NEW RENTAL IS MADE -----------------------------------
 ---------------------------function returning cost according to insurance id-----------------------------------------
 drop function if exists insuranceRentalValue;
