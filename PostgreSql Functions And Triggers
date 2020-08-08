@@ -1,0 +1,232 @@
+-- FUNCTIONS
+---------------The function that returns how many times the equipment whose id is sent has been used-------------------------
+drop function if EXISTS equipmentUseCount;
+CREATE OR REPLACE FUNCTION equipmentUseCount(equipmentId INT)
+RETURNS TABLE(customerName varchar(255),departmentName varchar(255),sehir varchar(255)) 
+LANGUAGE "plpgsql"
+AS 
+$function$
+BEGIN
+    RETURN QUERY 
+        SELECT customerTemp.name, 
+        departmentTemp.department_name,  
+        locationTemp.city                 
+        FROM rental rentTemp
+        inner join equipment equipmentTemp       on equipmentTemp.id=rentTemp.equipment_id and equipmentTemp.id=equipmentId
+        inner join customer customerTemp         on customerTemp.id = rentTemp.customer_id
+        inner join department departmentTemp     on departmentTemp.id = rentTemp.department_id
+        inner join staff staffTemp               on departmentTemp.staff_id = staffTemp.id
+        inner join location locationTemp         on departmentTemp.location_id=locationTemp.id
+        group by rentTemp.id,customerTemp.name,departmentTemp.department_name,locationTemp.city
+        order by count(rentTemp.equipment_id) desc ;
+END
+$function$ ;
+--select * from equipmentUseCount(2);
+------------------------------------------------------------------------------------------------------------------------------
+-----------------------the function that returns how much the customer whose id is sent has paid ----------------
+drop function if EXISTS netAmountPay;
+create or replace FUNCTION netAmountPay(customerId int)
+returns table (customerName varchar(255),net_pay money)
+LANGUAGE "plpgsql"
+as
+$function$
+begin
+    return query 
+        SELECT customerTemp.name, 
+        SUM(rental_invoiceTemp.net_amount_payable)                   
+        FROM rental rentTemp
+        inner join customer customerTemp             on rentTemp.customer_id=customerTemp.id and customerTemp.id = customerId
+        inner join rental_invoice rental_invoiceTemp on rental_invoiceTemp.rental_id = rentTemp.id
+        group by rentTemp.id,customerTemp.name
+        order by count(rental_invoiceTemp.rental_id) desc ;
+end $function$;
+--select * from netAmountPay(1);
+------------------------------------------------------------------------------------------------------------------------------
+    
+-----------------function that returns how many hires each staff member has--------------------------------------------------
+drop function if exists countStaffRent;
+create or replace function countStaffRent()
+returns table (staffName varchar(255),countStaff BIGINT)
+language "plpgsql"
+as
+$function$
+begin
+    return query 
+        select  staffTemp.name,
+                COUNT(staffTemp.id)
+                from rental rentTemp
+                inner join department departmentTemp on departmentTemp.id = rentTemp.department_id
+                inner join staff staffTemp on departmentTemp.staff_id=staffTemp.id
+                group by staffTemp.name;                
+end $function$;
+--select * from countStaffRent();
+------------------------------------------------------------------------------------------------------------------------------
+
+--TRIGGERS
+------------------------------------------TRIGGER COMMISSIONED WHEN A NEW RENTAL IS MADE -----------------------------------
+---------------------------function returning cost according to insurance id-----------------------------------------
+drop function if exists insuranceRentalValue;
+create or replace function insuranceRentalValue(insuranceId int)
+returns money 
+language "plpgsql"
+as
+$function$
+begin
+    if insuranceId is null then
+        return(0);
+    else
+        return(select cost from insurance where insurance.id = insuranceId);
+    end if;
+end $function$;
+----------------------------------------------------------------------------------------------------------------------------
+----------------------------function returning cost according to equipment id-------------------------------
+drop function if exists equipmentRentalValue;
+create or replace function equipmentRentalValue(equipmentId int)
+returns money 
+language "plpgsql"
+as
+$function$
+begin
+    if equipmentId is null then
+        return(0); 
+    ELSE
+        return(select rental_value from equipment where equipment.id = equipmentId);
+    end if;
+end $function$;
+-------------------------------------------------------------------------------------------------------------------------
+--------------------------function returning cost according to car id-----------------------------------------
+drop function if exists carRentalValue;
+create or replace function carRentalValue(carId int)
+returns money 
+language "plpgsql"
+as
+$function$
+begin
+    if carId is null then
+        return(0);
+    else
+    return(select car_category_temp.rental_value from car car_temp
+        inner JOIN car_category car_category_temp on car_category_temp.id=car_temp.car_category_id
+        where car_temp.id = carId);
+    end if;
+end $function$;
+--------------------------------------------------------------------------------------------------------------------------
+--------------------------the function returns by collecting the incoming id's rental values-----------------------------------------
+drop function if exists sumRentalValue;
+create or replace function sumRentalValue(carId int,equipmentId int,insuranceId int)
+returns money 
+language "plpgsql"
+as
+$function$
+begin
+    return(carRentalValue(carId)+equipmentRentalValue(equipmentId)+insuranceRentalValue(insuranceId));
+end $function$;
+---------------------------------------------------------------------------------------------------------------------------
+DROP TRIGGER if EXISTS insert_update_rental_trigger on rental;
+DROP FUNCTION if EXISTS insert_update_rental_trigger;
+CREATE OR REPLACE FUNCTION insert_update_rental_trigger() 
+   RETURNS TRIGGER 
+   LANGUAGE "plpgsql"
+AS $insert_update_rental_trigger$
+    DECLARE 
+        rental_idTemp       int;
+        insurance_idTemp    int;
+        equipment_idTemp    int;
+        car_idTemp          int;
+        delay_price_value   money;
+        end_date_temp       date;
+        delivery_date_temp  date;
+    BEGIN
+        IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN 
+            rental_idTemp           = NEW.id;
+            insurance_idTemp        = NEW.insurance_id;
+            equipment_idTemp        = NEW.equipment_id;
+            car_idTemp              = NEW.car_id;
+            delay_price_value       = carRentalValue(NEW.car_id);
+            end_date_temp           = NEW.end_date;
+            delivery_date_temp      = NEW.delivery_date;
+        END IF;
+        IF end_date_temp::date < delivery_date_temp::date THEN
+            delay_price_value = delay_price_value*(0.5);
+        ELSE
+            delay_price_value = 0;
+        END IF;
+            <<insert_update>>        
+            LOOP
+                UPDATE rental_invoice
+                    SET car_rent         = carRentalValue(car_idTemp),
+                    equipment_rent_total = equipmentRentalValue(equipment_idTemp),
+                    insurance_cost_total = insuranceRentalValue(insurance_idTemp),
+                    net_amount_payable   = sumRentalValue(car_idTemp,equipment_idTemp,insurance_idTemp) + delay_price_value
+                    WHERE rental_id = rental_idTemp;
+                EXIT insert_update WHEN FOUND;
+                BEGIN
+                    INSERT INTO rental_invoice (
+                                    car_rent,
+                                    equipment_rent_total,
+                                    insurance_cost_total,
+                                    net_amount_payable,
+                                    rental_id
+                                )
+                                VALUES(
+                                    carRentalValue(car_idTemp),
+                                    equipmentRentalValue(equipment_idTemp),
+                                    insuranceRentalValue(insurance_idTemp),
+                                    sumRentalValue(car_idTemp,equipment_idTemp,insurance_idTemp) + delay_price_value,
+                                    rental_idTemp
+                                );
+                    EXIT insert_update;
+                    EXCEPTION
+                    WHEN UNIQUE_VIOLATION THEN
+                END;
+            END LOOP insert_update;
+        RETURN NULL;
+END; $insert_update_rental_trigger$;
+drop trigger if EXISTS insert_update_rental_trigger on rental;
+CREATE TRIGGER insert_update_rental_trigger
+AFTER INSERT OR UPDATE ON rental
+    FOR EACH ROW EXECUTE PROCEDURE insert_update_rental_trigger();
+   
+-------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------TRIGGER WHICH MAKES THE RENTED CAR NOT AVAILABLE-------------------------------------------
+CREATE OR REPLACE FUNCTION car_status_function() 
+   RETURNS TRIGGER 
+   LANGUAGE "plpgsql"
+AS $car_status_trigger$
+        BEGIN
+            UPDATE car SET available = FALSE WHERE id = NEW.car_id;
+        RETURN NULL;
+END; $car_status_trigger$;
+drop trigger if EXISTS car_status_trigger on rental;
+CREATE TRIGGER car_status_trigger
+AFTER INSERT OR UPDATE ON rental
+    FOR EACH ROW EXECUTE PROCEDURE car_status_function();  --------------------------------------------------------------------------------------------------------------------------------
+------------------------------TRIGGER DELETING THE LOCATIONS CONNECTED TO THE DELETED COUNTRY--------------------------------
+CREATE OR REPLACE FUNCTION country_location_function() 
+   RETURNS TRIGGER 
+   LANGUAGE "plpgsql"
+AS $country_location_function$
+        BEGIN
+            DELETE FROM location WHERE country_id=OLD.id; 
+        RETURN NULL;
+END; $country_location_function$;
+drop trigger if EXISTS country_location_trigger on country;
+CREATE TRIGGER country_location_trigger
+AFTER DELETE ON country
+    FOR EACH ROW EXECUTE PROCEDURE country_location_function(); 
+--------------------------------------------------------------------------------------------------------------------------------
+------------------------------STAFF DELETED TRIGGER RELATED TO THE DELETED DEPARTMENT--------------------------------
+-- CREATE OR REPLACE FUNCTION department_staff_function() 
+--    RETURNS TRIGGER 
+--    LANGUAGE "plpgsql"
+-- AS $department_staff_function$
+--         BEGIN
+--             DELETE FROM staff WHERE id=OLD.id; 
+--         RETURN NULL;
+-- END; $department_staff_function$;
+-- 
+-- drop trigger if EXISTS department_staff_trigger on country;
+-- CREATE TRIGGER department_staff_trigger
+-- AFTER DELETE ON department
+--     FOR EACH ROW EXECUTE PROCEDURE department_staff_function(); 
+--------------------------------------------------------------------------------------------------------------------------------
