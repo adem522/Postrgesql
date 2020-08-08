@@ -259,7 +259,7 @@ $function$ ;
 --select * from equipmentUseCount(2);
 ------------------------------------------------------------------------------------------------------------------------------
 
------------------------id'si verilen müşterinin ne kadar harcama yaptığın döndüren fonksiyon----------------
+-----------------------the function that returns how much the customer whose id is sent has paid ----------------
 drop function if EXISTS netAmountPay;
 create or replace FUNCTION netAmountPay(customerId int)
 returns table (customerName varchar(255),net_pay money)
@@ -279,7 +279,7 @@ end $function$;
 --select * from netAmountPay(1);
 ------------------------------------------------------------------------------------------------------------------------------
     
----------------------Her personelin kaç tane kiralamada bulunduğunu döndüren fonksiyon----------------------------------
+-----------------function that returns how many hires each staff member has--------------------------------------------------
 drop function if exists countStaffRent;
 create or replace function countStaffRent()
 returns table (staffName varchar(255),countStaff BIGINT)
@@ -298,8 +298,8 @@ end $function$;
 --select * from countStaffRent();
 ------------------------------------------------------------------------------------------------------------------------------
 
-------------------------------------------YENİ KİRALAMA YAPILDIĞINDA DEVREYE GİREN TRIGGER -----------------------------------
----------------------------insurance id'sine göre  cost dönen fonksiyon-----------------------------------------
+------------------------------------------TRIGGER COMMISSIONED WHEN A NEW RENTAL IS MADE -----------------------------------
+---------------------------function returning cost according to insurance id-----------------------------------------
 drop function if exists insuranceRentalValue;
 create or replace function insuranceRentalValue(insuranceId int)
 returns money 
@@ -314,7 +314,7 @@ begin
     end if;
 end $function$;
 ----------------------------------------------------------------------------------------------------------------------------
-----------------------------equipment id'sine göre rental valuesini dönen fonksiyon----deneme---------------------------
+----------------------------function returning cost according to equipment id-------------------------------
 drop function if exists equipmentRentalValue;
 create or replace function equipmentRentalValue(equipmentId int)
 returns money 
@@ -323,13 +323,13 @@ as
 $function$
 begin
     if equipmentId is null then
-        return(0);-- 
+        return(0); 
     ELSE
         return(select rental_value from equipment where equipment.id = equipmentId);
     end if;
 end $function$;
 -------------------------------------------------------------------------------------------------------------------------
---------------------------car id'sine göre rental valuesini dönen fonksiyon-----------------------------------------
+--------------------------function returning cost according to car id-----------------------------------------
 drop function if exists carRentalValue;
 create or replace function carRentalValue(carId int)
 returns money 
@@ -346,7 +346,7 @@ begin
     end if;
 end $function$;
 --------------------------------------------------------------------------------------------------------------------------
---------------------------gelen idlerin rental valuesini toplayıp dönen fonksiyon-----------------------------------------
+--------------------------the function returns by collecting the incoming id's rental values-----------------------------------------
 drop function if exists sumRentalValue;
 create or replace function sumRentalValue(carId int,equipmentId int,insuranceId int)
 returns money 
@@ -426,7 +426,7 @@ AFTER INSERT OR UPDATE ON rental
     FOR EACH ROW EXECUTE PROCEDURE insert_update_rental_trigger();
    
 -------------------------------------------------------------------------------------------------------------------------------
-------------------------------------------SEÇİLEN ARABAYI NOT AVAILABE YAPAN TRIGGER-------------------------------------------
+------------------------------------------TRIGGER WHICH MAKES THE RENTED CAR NOT AVAILABLE-------------------------------------------
 CREATE OR REPLACE FUNCTION car_status_function() 
    RETURNS TRIGGER 
    LANGUAGE "plpgsql"
@@ -441,7 +441,7 @@ CREATE TRIGGER car_status_trigger
 AFTER INSERT OR UPDATE ON rental
     FOR EACH ROW EXECUTE PROCEDURE car_status_function();  --------------------------------------------------------------------------------------------------------------------------------
 
-------------------------------SİLİNEN COUNTRY'E BAĞLI LOCATIONLARI SİLEN TRIGGER--------------------------------
+------------------------------TRIGGER DELETING THE LOCATIONS CONNECTED TO THE DELETED COUNTRY--------------------------------
 CREATE OR REPLACE FUNCTION country_location_function() 
    RETURNS TRIGGER 
    LANGUAGE "plpgsql"
@@ -456,7 +456,7 @@ CREATE TRIGGER country_location_trigger
 AFTER DELETE ON country
     FOR EACH ROW EXECUTE PROCEDURE country_location_function(); 
 --------------------------------------------------------------------------------------------------------------------------------
-------------------------------SİLİNEN DEPARTMANA BAĞLI STAFF SİLEN TRIGGER--------------------------------
+------------------------------STAFF DELETED TRIGGER RELATED TO THE DELETED DEPARTMENT--------------------------------
 -- CREATE OR REPLACE FUNCTION department_staff_function() 
 --    RETURNS TRIGGER 
 --    LANGUAGE "plpgsql"
