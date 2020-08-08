@@ -1,0 +1,1531 @@
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 12.3
+-- Dumped by pg_dump version 12rc1
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: car_available_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.car_available_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            IF NOT(SELECT available from car WHERE id = NEW.car_id) THEN
+                RAISE WARNING 'not available';
+            END IF;
+
+END; $$;
+
+
+ALTER FUNCTION public.car_available_function() OWNER TO postgres;
+
+--
+-- Name: car_status_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.car_status_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            UPDATE car SET available =FALSE WHERE id = NEW.car_id;
+        RETURN NULL;
+END; $$;
+
+
+ALTER FUNCTION public.car_status_function() OWNER TO postgres;
+
+--
+-- Name: car_status_rent_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.car_status_rent_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            IF (NOT (SELECT available FROM car WHERE id = NEW.car_id)) THEN
+                RAISE WARNING 'INSERT,UPDATE,DELETE işlemleriniz engellendi.';
+            END IF;
+        RETURN NULL;
+END; $$;
+
+
+ALTER FUNCTION public.car_status_rent_function() OWNER TO postgres;
+
+--
+-- Name: carrentalvalue(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.carrentalvalue(carid integer) RETURNS money
+    LANGUAGE plpgsql
+    AS $$
+begin
+    if carId is null then
+        return(0);
+    else
+    return(select car_category_temp.rental_value from car car_temp
+        inner JOIN car_category car_category_temp on car_category_temp.id=car_temp.car_category_id
+        where car_temp.id = carId);
+    end if;
+end $$;
+
+
+ALTER FUNCTION public.carrentalvalue(carid integer) OWNER TO postgres;
+
+--
+-- Name: country_location_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.country_location_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            DELETE FROM location WHERE country_id=OLD.id; 
+        RETURN NULL;
+END; $$;
+
+
+ALTER FUNCTION public.country_location_function() OWNER TO postgres;
+
+--
+-- Name: countstaffrent(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.countstaffrent() RETURNS TABLE(staffname character varying, countstaff bigint)
+    LANGUAGE plpgsql
+    AS $$
+begin
+    return query 
+        select  staffTemp.name,
+                COUNT(staffTemp.id)
+                from rental rentTemp
+                inner join department departmentTemp on departmentTemp.id = rentTemp.department_id
+                inner join staff staffTemp on departmentTemp.staff_id=staffTemp.id
+                group by staffTemp.name;                
+end $$;
+
+
+ALTER FUNCTION public.countstaffrent() OWNER TO postgres;
+
+--
+-- Name: department_staff_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.department_staff_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            DELETE FROM staff WHERE id=OLD.id; 
+        RETURN NULL;
+END; $$;
+
+
+ALTER FUNCTION public.department_staff_function() OWNER TO postgres;
+
+--
+-- Name: equipmentrentalvalue(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.equipmentrentalvalue(equipmentid integer) RETURNS money
+    LANGUAGE plpgsql
+    AS $$
+begin
+    if equipmentId is null then
+        return(0);-- 
+    ELSE
+        return(select rental_value from equipment where equipment.id = equipmentId);
+    end if;
+end $$;
+
+
+ALTER FUNCTION public.equipmentrentalvalue(equipmentid integer) OWNER TO postgres;
+
+--
+-- Name: equipmentusecount(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.equipmentusecount(equipmentid integer) RETURNS TABLE(customername character varying, departmentname character varying, sehir character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY 
+        SELECT customerTemp.name, 
+        departmentTemp.department_name,  
+        locationTemp.city                 
+        FROM rental rentTemp
+        inner join equipment equipmentTemp       on equipmentTemp.id=rentTemp.equipment_id and equipmentTemp.id=equipmentId
+        inner join customer customerTemp         on customerTemp.id = rentTemp.customer_id
+        inner join department departmentTemp     on departmentTemp.id = rentTemp.department_id
+        inner join staff staffTemp               on departmentTemp.staff_id = staffTemp.id
+        inner join location locationTemp         on departmentTemp.location_id=locationTemp.id
+        group by rentTemp.id,customerTemp.name,departmentTemp.department_name,locationTemp.city
+        order by count(rentTemp.equipment_id) desc ;
+END
+$$;
+
+
+ALTER FUNCTION public.equipmentusecount(equipmentid integer) OWNER TO postgres;
+
+--
+-- Name: insert_update_rental_trigger(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.insert_update_rental_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE 
+        rental_idTemp       int;
+        insurance_idTemp    int;
+        equipment_idTemp    int;
+        car_idTemp          int;
+        delay_price_value   money;
+        end_date_temp       date;
+        delivery_date_temp  date;
+    BEGIN
+        IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') THEN 
+            rental_idTemp           = NEW.id;
+            insurance_idTemp        = NEW.insurance_id;
+            equipment_idTemp        = NEW.equipment_id;
+            car_idTemp              = NEW.car_id;
+            delay_price_value       = carRentalValue(NEW.car_id);
+            end_date_temp           = NEW.end_date;
+            delivery_date_temp      = NEW.delivery_date;
+        END IF;
+        IF end_date_temp::date < delivery_date_temp::date THEN
+            delay_price_value = delay_price_value*(0.5);
+        ELSE
+            delay_price_value = 0;
+        END IF;
+            <<insert_update>>        
+            LOOP
+                UPDATE rental_invoice
+                    SET car_rent         = carRentalValue(car_idTemp),
+                    equipment_rent_total = equipmentRentalValue(equipment_idTemp),
+                    insurance_cost_total = insuranceRentalValue(insurance_idTemp),
+                    net_amount_payable   = sumRentalValue(car_idTemp,equipment_idTemp,insurance_idTemp) + delay_price_value
+                    WHERE rental_id = rental_idTemp;
+                EXIT insert_update WHEN FOUND;
+                BEGIN
+                    INSERT INTO rental_invoice (
+                                    car_rent,
+                                    equipment_rent_total,
+                                    insurance_cost_total,
+                                    net_amount_payable,
+                                    rental_id
+                                )
+                                VALUES(
+                                    carRentalValue(car_idTemp),
+                                    equipmentRentalValue(equipment_idTemp),
+                                    insuranceRentalValue(insurance_idTemp),
+                                    sumRentalValue(car_idTemp,equipment_idTemp,insurance_idTemp) + delay_price_value,
+                                    rental_idTemp
+                                );
+                    EXIT insert_update;
+
+                    EXCEPTION
+                    WHEN UNIQUE_VIOLATION THEN
+                END;
+            END LOOP insert_update;
+        RETURN NULL;
+END; $$;
+
+
+ALTER FUNCTION public.insert_update_rental_trigger() OWNER TO postgres;
+
+--
+-- Name: insurancerentalvalue(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.insurancerentalvalue(insuranceid integer) RETURNS money
+    LANGUAGE plpgsql
+    AS $$
+begin
+    if insuranceId is null then
+        return(0);
+    else
+        return(select cost from insurance where insurance.id = insuranceId);
+    end if;
+end $$;
+
+
+ALTER FUNCTION public.insurancerentalvalue(insuranceid integer) OWNER TO postgres;
+
+--
+-- Name: netamountpay(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.netamountpay(customerid integer) RETURNS TABLE(customername character varying, net_pay money)
+    LANGUAGE plpgsql
+    AS $$
+begin
+    return query 
+        SELECT customerTemp.name, 
+        SUM(rental_invoiceTemp.net_amount_payable)                   
+        FROM rental rentTemp
+        inner join customer customerTemp             on rentTemp.customer_id=customerTemp.id and customerTemp.id = customerId
+        inner join rental_invoice rental_invoiceTemp on rental_invoiceTemp.rental_id = rentTemp.id
+        group by rentTemp.id,customerTemp.name
+        order by count(rental_invoiceTemp.rental_id) desc ;
+end $$;
+
+
+ALTER FUNCTION public.netamountpay(customerid integer) OWNER TO postgres;
+
+--
+-- Name: sumrentalvalue(integer, integer, integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sumrentalvalue(carid integer, equipmentid integer, insuranceid integer) RETURNS money
+    LANGUAGE plpgsql
+    AS $$
+begin
+    return(carRentalValue(carId)+equipmentRentalValue(equipmentId)+insuranceRentalValue(insuranceId));
+end $$;
+
+
+ALTER FUNCTION public.sumrentalvalue(carid integer, equipmentid integer, insuranceid integer) OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: car; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.car (
+    id integer NOT NULL,
+    available boolean DEFAULT true,
+    license_plate character varying(255) NOT NULL,
+    brand character varying(255),
+    model character varying(255),
+    production_year integer,
+    number_seats integer,
+    gear_type character varying(50),
+    mileage integer,
+    color character varying(255),
+    fuel_option character varying(255),
+    car_category_id integer NOT NULL,
+    current_location_id integer NOT NULL
+);
+
+
+ALTER TABLE public.car OWNER TO postgres;
+
+--
+-- Name: car_category; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.car_category (
+    id integer NOT NULL,
+    name character varying(255) NOT NULL,
+    rental_value money NOT NULL
+);
+
+
+ALTER TABLE public.car_category OWNER TO postgres;
+
+--
+-- Name: car_category_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.car_category_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.car_category_id_seq OWNER TO postgres;
+
+--
+-- Name: car_category_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.car_category_id_seq OWNED BY public.car_category.id;
+
+
+--
+-- Name: car_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.car_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.car_id_seq OWNER TO postgres;
+
+--
+-- Name: car_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.car_id_seq OWNED BY public.car.id;
+
+
+--
+-- Name: country; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.country (
+    id integer NOT NULL,
+    name character varying(255)
+);
+
+
+ALTER TABLE public.country OWNER TO postgres;
+
+--
+-- Name: country_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.country_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.country_id_seq OWNER TO postgres;
+
+--
+-- Name: country_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.country_id_seq OWNED BY public.country.id;
+
+
+--
+-- Name: customer; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.customer (
+    id integer NOT NULL,
+    name character varying(255) NOT NULL,
+    surname character varying(255) NOT NULL,
+    birth_date date NOT NULL,
+    driving_license_number character varying(255) NOT NULL,
+    CONSTRAINT customer_birth_date_check CHECK ((date_part('year'::text, age((birth_date)::timestamp with time zone)) >= (18)::double precision))
+);
+
+
+ALTER TABLE public.customer OWNER TO postgres;
+
+--
+-- Name: customer_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.customer_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.customer_id_seq OWNER TO postgres;
+
+--
+-- Name: customer_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.customer_id_seq OWNED BY public.customer.id;
+
+
+--
+-- Name: department; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.department (
+    id integer NOT NULL,
+    department_name character varying(255),
+    location_id integer NOT NULL,
+    staff_id integer NOT NULL
+);
+
+
+ALTER TABLE public.department OWNER TO postgres;
+
+--
+-- Name: department_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.department_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.department_id_seq OWNER TO postgres;
+
+--
+-- Name: department_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.department_id_seq OWNED BY public.department.id;
+
+
+--
+-- Name: equipment; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.equipment (
+    id integer NOT NULL,
+    name character varying(255) NOT NULL,
+    rental_value money DEFAULT 50,
+    equipment_category_id integer NOT NULL,
+    current_location_id integer NOT NULL
+);
+
+
+ALTER TABLE public.equipment OWNER TO postgres;
+
+--
+-- Name: equipment_category; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.equipment_category (
+    id integer NOT NULL,
+    name character varying(255) NOT NULL
+);
+
+
+ALTER TABLE public.equipment_category OWNER TO postgres;
+
+--
+-- Name: equipment_category_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.equipment_category_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.equipment_category_id_seq OWNER TO postgres;
+
+--
+-- Name: equipment_category_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.equipment_category_id_seq OWNED BY public.equipment_category.id;
+
+
+--
+-- Name: equipment_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.equipment_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.equipment_id_seq OWNER TO postgres;
+
+--
+-- Name: equipment_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.equipment_id_seq OWNED BY public.equipment.id;
+
+
+--
+-- Name: fuel_option; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.fuel_option (
+    id integer NOT NULL,
+    name character varying(255) NOT NULL
+);
+
+
+ALTER TABLE public.fuel_option OWNER TO postgres;
+
+--
+-- Name: fuel_option_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.fuel_option_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.fuel_option_id_seq OWNER TO postgres;
+
+--
+-- Name: fuel_option_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.fuel_option_id_seq OWNED BY public.fuel_option.id;
+
+
+--
+-- Name: insurance; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.insurance (
+    id integer NOT NULL,
+    name character varying(255),
+    description character varying(255),
+    cost money
+);
+
+
+ALTER TABLE public.insurance OWNER TO postgres;
+
+--
+-- Name: insurance_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.insurance_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.insurance_id_seq OWNER TO postgres;
+
+--
+-- Name: insurance_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.insurance_id_seq OWNED BY public.insurance.id;
+
+
+--
+-- Name: insurance_policys; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.insurance_policys (
+    insurance_id integer NOT NULL,
+    policys_id integer NOT NULL
+);
+
+
+ALTER TABLE public.insurance_policys OWNER TO postgres;
+
+--
+-- Name: location; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.location (
+    id integer NOT NULL,
+    street_address character varying(100) NOT NULL,
+    city character varying(50) NOT NULL,
+    state character varying(50) NOT NULL,
+    zip character varying(50) NOT NULL,
+    country_id integer NOT NULL
+);
+
+
+ALTER TABLE public.location OWNER TO postgres;
+
+--
+-- Name: location_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.location_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.location_id_seq OWNER TO postgres;
+
+--
+-- Name: location_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.location_id_seq OWNED BY public.location.id;
+
+
+--
+-- Name: policys; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.policys (
+    id integer NOT NULL,
+    description character varying(255)
+);
+
+
+ALTER TABLE public.policys OWNER TO postgres;
+
+--
+-- Name: policys_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.policys_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.policys_id_seq OWNER TO postgres;
+
+--
+-- Name: policys_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.policys_id_seq OWNED BY public.policys.id;
+
+
+--
+-- Name: rental; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.rental (
+    id integer NOT NULL,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    delivery_date date NOT NULL,
+    customer_id integer NOT NULL,
+    car_id integer NOT NULL,
+    pick_up_location_id integer NOT NULL,
+    drop_off_location_id integer NOT NULL,
+    department_id integer NOT NULL,
+    equipment_id integer,
+    insurance_id integer
+);
+
+
+ALTER TABLE public.rental OWNER TO postgres;
+
+--
+-- Name: rental_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.rental_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.rental_id_seq OWNER TO postgres;
+
+--
+-- Name: rental_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.rental_id_seq OWNED BY public.rental.id;
+
+
+--
+-- Name: rental_invoice; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.rental_invoice (
+    id integer NOT NULL,
+    car_rent money NOT NULL,
+    equipment_rent_total money,
+    insurance_cost_total money,
+    net_amount_payable money NOT NULL,
+    rental_id integer NOT NULL
+);
+
+
+ALTER TABLE public.rental_invoice OWNER TO postgres;
+
+--
+-- Name: rental_invoice_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.rental_invoice_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.rental_invoice_id_seq OWNER TO postgres;
+
+--
+-- Name: rental_invoice_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.rental_invoice_id_seq OWNED BY public.rental_invoice.id;
+
+
+--
+-- Name: staff; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.staff (
+    id integer NOT NULL,
+    name character varying(255),
+    surname character varying(255)
+);
+
+
+ALTER TABLE public.staff OWNER TO postgres;
+
+--
+-- Name: staff_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.staff_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.staff_id_seq OWNER TO postgres;
+
+--
+-- Name: staff_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.staff_id_seq OWNED BY public.staff.id;
+
+
+--
+-- Name: car id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car ALTER COLUMN id SET DEFAULT nextval('public.car_id_seq'::regclass);
+
+
+--
+-- Name: car_category id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car_category ALTER COLUMN id SET DEFAULT nextval('public.car_category_id_seq'::regclass);
+
+
+--
+-- Name: country id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.country ALTER COLUMN id SET DEFAULT nextval('public.country_id_seq'::regclass);
+
+
+--
+-- Name: customer id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.customer ALTER COLUMN id SET DEFAULT nextval('public.customer_id_seq'::regclass);
+
+
+--
+-- Name: department id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.department ALTER COLUMN id SET DEFAULT nextval('public.department_id_seq'::regclass);
+
+
+--
+-- Name: equipment id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment ALTER COLUMN id SET DEFAULT nextval('public.equipment_id_seq'::regclass);
+
+
+--
+-- Name: equipment_category id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment_category ALTER COLUMN id SET DEFAULT nextval('public.equipment_category_id_seq'::regclass);
+
+
+--
+-- Name: fuel_option id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.fuel_option ALTER COLUMN id SET DEFAULT nextval('public.fuel_option_id_seq'::regclass);
+
+
+--
+-- Name: insurance id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.insurance ALTER COLUMN id SET DEFAULT nextval('public.insurance_id_seq'::regclass);
+
+
+--
+-- Name: location id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.location ALTER COLUMN id SET DEFAULT nextval('public.location_id_seq'::regclass);
+
+
+--
+-- Name: policys id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.policys ALTER COLUMN id SET DEFAULT nextval('public.policys_id_seq'::regclass);
+
+
+--
+-- Name: rental id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental ALTER COLUMN id SET DEFAULT nextval('public.rental_id_seq'::regclass);
+
+
+--
+-- Name: rental_invoice id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental_invoice ALTER COLUMN id SET DEFAULT nextval('public.rental_invoice_id_seq'::regclass);
+
+
+--
+-- Name: staff id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.staff ALTER COLUMN id SET DEFAULT nextval('public.staff_id_seq'::regclass);
+
+
+--
+-- Data for Name: car; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.car (id, available, license_plate, brand, model, production_year, number_seats, gear_type, mileage, color, fuel_option, car_category_id, current_location_id) VALUES
+	(6, true, '11aa531', 'Mercedes', '300SEL', NULL, NULL, NULL, NULL, NULL, NULL, 3, 5),
+	(7, true, '11aa532', 'Cadillac', 'Escalade', NULL, NULL, NULL, NULL, NULL, NULL, 3, 5),
+	(8, true, '11aa533', 'Land Rover', 'Defender', NULL, NULL, NULL, NULL, NULL, NULL, 3, 4),
+	(1, false, '11aa527', 'Nissan', 'Qashqai', NULL, NULL, NULL, NULL, NULL, NULL, 3, 1),
+	(3, false, '11aa529', 'Tofaş', 'Şahin', NULL, NULL, NULL, NULL, NULL, NULL, 1, 3),
+	(2, false, '11aa528', 'Nissan', 'Juke', NULL, NULL, NULL, NULL, NULL, NULL, 2, 2),
+	(5, false, '11aa530', 'Bmw', '320i', NULL, NULL, NULL, NULL, NULL, NULL, 2, 4),
+	(4, false, '11aa535', 'Tofaş', 'Şahin', NULL, NULL, NULL, NULL, NULL, NULL, 1, 3);
+
+
+--
+-- Data for Name: car_category; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.car_category (id, name, rental_value) VALUES
+	(1, 'Ekonomik', '?100,00'),
+	(2, 'Normal', '?170,00'),
+	(3, 'Lüks', '?250,00');
+
+
+--
+-- Data for Name: country; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.country (id, name) VALUES
+	(1, 'Country 1'),
+	(2, 'Country 2'),
+	(3, 'Country 3'),
+	(4, 'Country 4'),
+	(5, 'Irak');
+
+
+--
+-- Data for Name: customer; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.customer (id, name, surname, birth_date, driving_license_number) VALUES
+	(1, 'Costumer1', 'Costumer1', '1998-05-29', '314'),
+	(2, 'Costumer2', 'Costumer2', '1998-05-28', '3141'),
+	(3, 'Costumer3', 'Costumer3', '1998-05-27', '31416'),
+	(4, 'Costumer4', 'Costumer4', '1998-05-29', '314158'),
+	(5, 'Costumer5', 'Costumer5', '1998-05-26', '3141592');
+
+
+--
+-- Data for Name: department; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.department (id, department_name, location_id, staff_id) VALUES
+	(1, 'department1', 1, 1),
+	(2, 'department2', 2, 2),
+	(3, 'department3', 3, 3),
+	(4, 'department4', 4, 4),
+	(5, 'Bağdat Şubesi', 5, 5);
+
+
+--
+-- Data for Name: equipment; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.equipment (id, name, rental_value, equipment_category_id, current_location_id) VALUES
+	(1, 'Bebek Koltuğu', '?50,00', 2, 1),
+	(2, 'Navigasyon Cihazı', '?55,00', 1, 3),
+	(3, 'Laptop', '?100,00', 1, 1);
+
+
+--
+-- Data for Name: equipment_category; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.equipment_category (id, name) VALUES
+	(1, 'Elektronik'),
+	(2, 'Güvenlik');
+
+
+--
+-- Data for Name: fuel_option; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+
+
+--
+-- Data for Name: insurance; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.insurance (id, name, description, cost) VALUES
+	(1, 'Kaza Sigortası', 'Kazaları karşılayan sigorta', '?50,00'),
+	(2, 'Sağlık Sigortası', 'Sağlık giderlerini karşılayan sigorta', '?75,00');
+
+
+--
+-- Data for Name: insurance_policys; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.insurance_policys (insurance_id, policys_id) VALUES
+	(1, 1),
+	(1, 2),
+	(2, 3);
+
+
+--
+-- Data for Name: location; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.location (id, street_address, city, state, zip, country_id) VALUES
+	(1, 'adress1', 'city1', 'state1', '16200', 1),
+	(2, 'adress2', 'city2', 'state2', '11300', 2),
+	(3, 'adress3', 'city3', 'state3', '9800', 3),
+	(4, 'adress4', 'city4', 'state4', '9700', 4),
+	(5, 'Yafa St.s5', 'Bağdat', 'Tahrir', '898', 1);
+
+
+--
+-- Data for Name: policys; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.policys (id, description) VALUES
+	(1, 'police1'),
+	(2, 'police2'),
+	(3, 'police3');
+
+
+--
+-- Data for Name: rental; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.rental (id, start_date, end_date, delivery_date, customer_id, car_id, pick_up_location_id, drop_off_location_id, department_id, equipment_id, insurance_id) VALUES
+	(3, '2020-07-14', '2020-07-19', '2020-07-20', 3, 3, 4, 4, 3, NULL, NULL),
+	(4, '2020-07-27', '2020-07-29', '2020-07-29', 1, 1, 1, 1, 1, 1, NULL),
+	(17, '2020-07-22', '2020-07-25', '2020-07-25', 1, 1, 1, 1, 1, 1, 1),
+	(21, '2020-07-22', '2020-07-25', '2020-07-25', 1, 5, 1, 1, 1, 1, 1),
+	(32, '2020-07-27', '2020-07-29', '2020-07-29', 1, 1, 1, 1, 1, 1, NULL),
+	(33, '2020-07-27', '2020-07-29', '2020-07-29', 1, 5, 1, 1, 1, 1, NULL),
+	(37, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(38, '2020-07-27', '2020-07-29', '2020-07-18', 1, 1, 1, 1, 1, 1, NULL),
+	(39, '2020-07-27', '2020-07-29', '2020-07-18', 1, 1, 1, 1, 1, 1, NULL),
+	(40, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(41, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(47, '2020-07-27', '2020-07-29', '2020-07-28', 1, 1, 1, 1, 1, 1, NULL),
+	(53, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(55, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(56, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 1, NULL),
+	(19, '2020-07-22', '2020-07-25', '2020-07-25', 1, 1, 1, 1, 2, 1, 1),
+	(57, '2020-07-27', '2020-07-29', '2020-07-31', 1, 1, 1, 1, 1, 2, 2),
+	(2, '2020-07-21', '2020-07-25', '2020-07-26', 2, 2, 3, 3, 2, NULL, 2),
+	(58, '2020-08-08', '2020-08-08', '2020-08-08', 1, 5, 1, 1, 1, 2, NULL),
+	(18, '2020-07-22', '2020-07-25', '2020-07-25', 1, 1, 1, 1, 1, 1, NULL),
+	(16, '2020-07-22', '2020-07-25', '2020-07-25', 1, 4, 1, 1, 1, 1, NULL),
+	(1, '2020-07-22', '2020-07-25', '2020-07-25', 1, 1, 1, 1, 1, 1, NULL),
+	(20, '2020-07-22', '2020-07-25', '2020-07-25', 1, 1, 1, 1, 1, NULL, 1);
+
+
+--
+-- Data for Name: rental_invoice; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.rental_invoice (id, car_rent, equipment_rent_total, insurance_cost_total, net_amount_payable, rental_id) VALUES
+	(3, '?100,00', '?0,00', '?0,00', '?100,00', 3),
+	(4, '?250,00', '?50,00', '?0,00', '?300,00', 4),
+	(6, '?250,00', '?50,00', '?50,00', '?350,00', 17),
+	(7, '?250,00', '?50,00', '?0,00', '?300,00', 32),
+	(8, '?170,00', '?50,00', '?0,00', '?220,00', 33),
+	(9, '?250,00', '?50,00', '?0,00', '?300,00', 37),
+	(10, '?250,00', '?50,00', '?0,00', '?300,00', 38),
+	(11, '?250,00', '?50,00', '?0,00', '?300,00', 39),
+	(12, '?250,00', '?50,00', '?0,00', '?300,00', 40),
+	(13, '?250,00', '?50,00', '?0,00', '?300,00', 41),
+	(14, '?250,00', '?50,00', '?0,00', '?425,00', 47),
+	(15, '?250,00', '?50,00', '?0,00', '?300,00', 53),
+	(17, '?250,00', '?50,00', '?0,00', '?300,00', 55),
+	(18, '?250,00', '?50,00', '?0,00', '?300,00', 56),
+	(20, '?250,00', '?50,00', '?50,00', '?350,00', 19),
+	(19, '?250,00', '?55,00', '?75,00', '?505,00', 57),
+	(2, '?170,00', '?0,00', '?75,00', '?330,00', 2),
+	(21, '?170,00', '?55,00', '?0,00', '?225,00', 58),
+	(22, '?250,00', '?50,00', '?0,00', '?300,00', 18),
+	(5, '?100,00', '?50,00', '?0,00', '?150,00', 16),
+	(1, '?250,00', '?50,00', '?0,00', '?300,00', 1),
+	(23, '?250,00', '?0,00', '?50,00', '?300,00', 20);
+
+
+--
+-- Data for Name: staff; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.staff (id, name, surname) VALUES
+	(1, 'Staff1', 'Staff1'),
+	(2, 'Staff2', 'Staff2'),
+	(3, 'Staff3', 'Staff3'),
+	(4, 'Staff4', 'Staff4'),
+	(5, 'Staff5', 'Staff5');
+
+
+--
+-- Name: car_category_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.car_category_id_seq', 3, true);
+
+
+--
+-- Name: car_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.car_id_seq', 8, true);
+
+
+--
+-- Name: country_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.country_id_seq', 5, true);
+
+
+--
+-- Name: customer_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.customer_id_seq', 5, true);
+
+
+--
+-- Name: department_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.department_id_seq', 5, true);
+
+
+--
+-- Name: equipment_category_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.equipment_category_id_seq', 2, true);
+
+
+--
+-- Name: equipment_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.equipment_id_seq', 3, true);
+
+
+--
+-- Name: fuel_option_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.fuel_option_id_seq', 1, false);
+
+
+--
+-- Name: insurance_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.insurance_id_seq', 2, true);
+
+
+--
+-- Name: location_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.location_id_seq', 5, true);
+
+
+--
+-- Name: policys_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.policys_id_seq', 3, true);
+
+
+--
+-- Name: rental_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.rental_id_seq', 58, true);
+
+
+--
+-- Name: rental_invoice_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.rental_invoice_id_seq', 23, true);
+
+
+--
+-- Name: staff_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.staff_id_seq', 5, true);
+
+
+--
+-- Name: car_category car_category_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car_category
+    ADD CONSTRAINT car_category_pk PRIMARY KEY (id);
+
+
+--
+-- Name: car car_license_plate_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car
+    ADD CONSTRAINT car_license_plate_key UNIQUE (license_plate);
+
+
+--
+-- Name: car car_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car
+    ADD CONSTRAINT car_pk PRIMARY KEY (id);
+
+
+--
+-- Name: country country_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.country
+    ADD CONSTRAINT country_pk PRIMARY KEY (id);
+
+
+--
+-- Name: customer customer_driving_license_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.customer
+    ADD CONSTRAINT customer_driving_license_number_key UNIQUE (driving_license_number);
+
+
+--
+-- Name: customer customer_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.customer
+    ADD CONSTRAINT customer_pk PRIMARY KEY (id);
+
+
+--
+-- Name: department department_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.department
+    ADD CONSTRAINT department_pk PRIMARY KEY (id);
+
+
+--
+-- Name: equipment_category equipment_category_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment_category
+    ADD CONSTRAINT equipment_category_pk PRIMARY KEY (id);
+
+
+--
+-- Name: equipment equipment_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_pk PRIMARY KEY (id);
+
+
+--
+-- Name: fuel_option fuel_option_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.fuel_option
+    ADD CONSTRAINT fuel_option_pk PRIMARY KEY (id);
+
+
+--
+-- Name: insurance insurance_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.insurance
+    ADD CONSTRAINT insurance_pk PRIMARY KEY (id);
+
+
+--
+-- Name: location location_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.location
+    ADD CONSTRAINT location_pk PRIMARY KEY (id);
+
+
+--
+-- Name: location location_zip_ux; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.location
+    ADD CONSTRAINT location_zip_ux UNIQUE (zip);
+
+
+--
+-- Name: policys policys_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.policys
+    ADD CONSTRAINT policys_pk PRIMARY KEY (id);
+
+
+--
+-- Name: rental_invoice rental_invoice_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental_invoice
+    ADD CONSTRAINT rental_invoice_pk PRIMARY KEY (id);
+
+
+--
+-- Name: rental rental_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_pk PRIMARY KEY (id);
+
+
+--
+-- Name: staff staff_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.staff
+    ADD CONSTRAINT staff_pk PRIMARY KEY (id);
+
+
+--
+-- Name: rental car_status_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER car_status_trigger AFTER INSERT OR UPDATE ON public.rental FOR EACH ROW EXECUTE FUNCTION public.car_status_function();
+
+
+--
+-- Name: country country_location_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER country_location_trigger AFTER INSERT OR UPDATE ON public.country FOR EACH ROW EXECUTE FUNCTION public.country_location_function();
+
+
+--
+-- Name: department department_staff_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER department_staff_trigger AFTER DELETE ON public.department FOR EACH ROW EXECUTE FUNCTION public.department_staff_function();
+
+
+--
+-- Name: rental insert_update_rental_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER insert_update_rental_trigger AFTER INSERT OR UPDATE ON public.rental FOR EACH ROW EXECUTE FUNCTION public.insert_update_rental_trigger();
+
+
+--
+-- Name: car car_category_car; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car
+    ADD CONSTRAINT car_category_car FOREIGN KEY (car_category_id) REFERENCES public.car_category(id);
+
+
+--
+-- Name: car car_location; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.car
+    ADD CONSTRAINT car_location FOREIGN KEY (current_location_id) REFERENCES public.location(id);
+
+
+--
+-- Name: department department_location; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.department
+    ADD CONSTRAINT department_location FOREIGN KEY (location_id) REFERENCES public.location(id);
+
+
+--
+-- Name: department department_staff; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.department
+    ADD CONSTRAINT department_staff FOREIGN KEY (staff_id) REFERENCES public.staff(id);
+
+
+--
+-- Name: equipment equipment_equipment_category; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_equipment_category FOREIGN KEY (equipment_category_id) REFERENCES public.equipment_category(id);
+
+
+--
+-- Name: equipment equipment_location; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_location FOREIGN KEY (current_location_id) REFERENCES public.location(id);
+
+
+--
+-- Name: insurance_policys insurance_policys_insurance; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.insurance_policys
+    ADD CONSTRAINT insurance_policys_insurance FOREIGN KEY (insurance_id) REFERENCES public.insurance(id);
+
+
+--
+-- Name: insurance_policys insurance_policys_policys; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.insurance_policys
+    ADD CONSTRAINT insurance_policys_policys FOREIGN KEY (policys_id) REFERENCES public.policys(id);
+
+
+--
+-- Name: location location_country; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.location
+    ADD CONSTRAINT location_country FOREIGN KEY (country_id) REFERENCES public.country(id);
+
+
+--
+-- Name: rental rental_car; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_car FOREIGN KEY (car_id) REFERENCES public.car(id);
+
+
+--
+-- Name: rental rental_customer; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_customer FOREIGN KEY (customer_id) REFERENCES public.customer(id);
+
+
+--
+-- Name: rental rental_department; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_department FOREIGN KEY (department_id) REFERENCES public.department(id);
+
+
+--
+-- Name: rental rental_drop_off_location; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_drop_off_location FOREIGN KEY (drop_off_location_id) REFERENCES public.location(id);
+
+
+--
+-- Name: rental rental_equipment; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_equipment FOREIGN KEY (equipment_id) REFERENCES public.equipment(id);
+
+
+--
+-- Name: rental rental_insurance; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_insurance FOREIGN KEY (insurance_id) REFERENCES public.insurance(id);
+
+
+--
+-- Name: rental_invoice rental_invoice_rental; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental_invoice
+    ADD CONSTRAINT rental_invoice_rental FOREIGN KEY (rental_id) REFERENCES public.rental(id) ON DELETE CASCADE;
+
+
+--
+-- Name: rental rental_pick_up_location; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.rental
+    ADD CONSTRAINT rental_pick_up_location FOREIGN KEY (pick_up_location_id) REFERENCES public.location(id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
