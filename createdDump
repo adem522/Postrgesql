@@ -162,6 +162,11 @@ CREATE FUNCTION public.insert_update_rental_trigger() RETURNS trigger
         END IF;
             <<insert_update>>        
             LOOP
+                IF (TG_OP = 'DELETE') THEN
+                    UPDATE car
+                        SET available = TRUE WHERE id = OLD.car_id;
+                    EXIT insert_update;
+                END IF;	    
                 UPDATE rental_invoice
                     SET car_rent         = carRentalValue(car_idTemp),
                     equipment_rent_total = equipmentRentalValue(equipment_idTemp),
