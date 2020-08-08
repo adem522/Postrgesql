@@ -234,7 +234,7 @@ ALTER TABLE rental ADD CONSTRAINT rental_department
 	REFERENCES department (id);
 
 -- FUNCTIONS
--------------------id'si gönderilen ekipman kaç kere kullanılmış--------------------------------
+---------------The function that returns how many times the equipment whose id is sent has been used-------------------------
 drop function if EXISTS equipmentUseCount;
 CREATE OR REPLACE FUNCTION equipmentUseCount(equipmentId INT)
 RETURNS TABLE(customerName varchar(255),departmentName varchar(255),sehir varchar(255)) 
